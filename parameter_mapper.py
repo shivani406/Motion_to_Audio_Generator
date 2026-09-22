@@ -2,75 +2,63 @@
 import config
 import numpy as np
 
+PENTATONIC_SCALE = [
+    130.81,
+    146.83,
+    164.81,
+    196.00,
+    220.00,  # C3, D3, E3, G3, A3
+    261.63,
+    293.66,
+    329.63,
+    392.00,
+    440.00,  # C4, D4, E4, G4, A4
+    523.25,
+    587.33,
+    659.25,
+    783.99,
+    880.00,  # C5, D5, E5, G5, A5
+]
+
+
 class ParameterMapper:
 
   def __init__(self):
-    self.smoothed_freq = config.MIN_FREQ
-    self.smoothed_cutoff = config.MIN_CUTOFF
+    self.prev_x = None
+    self.prev_y = None
+    self.smoothed_freq = PENTATONIC_SCALE[0]
     self.smoothed_gain = 0.0
 
-  def extract_features(self, magnitude):
-    motion_mask = magnitude > config.MOTION_THRESHOLD
-    active_mags = magnitude[motion_mask]
+  def map_fingertip_to_audio(self, fingertip_coords):
+    cx, cy = fingertip_coords
 
-    if active_mags.size == 0:
-      return None, None, 0.0
-
-    y_indices, x_indices = np.where(motion_mask)
-
-    centroid_x = np.mean(x_indices)
-    centroid_y = np.mean(y_indices)
-    total_energy = np.sum(active_mags)
-
-    return centroid_x, centroid_y, total_energy
-
-  def map_to_audio(self, centroid_x, centroid_y, total_energy):
-    if centroid_x is None or centroid_y is None or total_energy == 0.0:
-      raw_freq = self.smoothed_freq
-      raw_cutoff = self.smoothed_cutoff
+    if cx is None or cy is None:
       raw_gain = 0.0
+      target_freq = self.smoothed_freq
     else:
-      raw_freq = np.interp(
-          centroid_x, [0, config.FRAME_WIDTH], [config.MIN_FREQ, config.MAX_FREQ]
-      )
+      if self.prev_x is not None and self.prev_y is not None:
+        velocity = np.sqrt((cx - self.prev_x) ** 2 + (cy - self.prev_y) ** 2)
+      else:
+        velocity = 0.0
 
-      raw_cutoff = np.interp(
-          centroid_y,
-          [0, config.FRAME_HEIGHT],
-          [config.MAX_CUTOFF, config.MIN_CUTOFF],
-      )
+      self.prev_x, self.prev_y = cx, cy
 
-      normalized_energy = np.interp(
-          total_energy, [0.0, 50000.0], [0.0, config.MAX_GAIN]
-      )
-      raw_gain = np.clip(normalized_energy, 0.0, config.MAX_GAIN)
+      if velocity < 3.0:
+        raw_gain = 0.0
+      else:
+        raw_gain = np.interp(velocity, [3.0, 40.0], [0.05, config.MAX_GAIN])
 
-    alpha = config.SMOOTHING_ALPHA
+      scale_idx = int(
+          np.interp(cx, [0, config.FRAME_WIDTH], [0, len(PENTATONIC_SCALE) - 1])
+      )
+      target_freq = PENTATONIC_SCALE[scale_idx]
+
+    alpha = 0.15
     self.smoothed_freq = (
-        alpha * raw_freq + (1.0 - alpha) * self.smoothed_freq
-    )
-    self.smoothed_cutoff = (
-        alpha * raw_cutoff + (1.0 - alpha) * self.smoothed_cutoff
+        alpha * target_freq + (1.0 - alpha) * self.smoothed_freq
     )
     self.smoothed_gain = (
         alpha * raw_gain + (1.0 - alpha) * self.smoothed_gain
     )
 
-    return self.smoothed_freq, self.smoothed_cutoff, self.smoothed_gain
-
-
-if __name__ == "__main__":
-  mapper = ParameterMapper()
-  dummy_mag = np.zeros((config.FRAME_HEIGHT, config.FRAME_WIDTH))
-  dummy_mag[100:200, 100:200] = 5.0
-
-  cx, cy, energy = mapper.extract_features(dummy_mag)
-  freq, cutoff, gain = mapper.map_to_audio(cx, cy, energy)
-
-  print(
-      f"Extracted Centroid: ({cx:.1f}, {cy:.1f}), Total Energy: {energy:.1f}"
-  )
-  print(
-      f"Mapped Parameters -> Frequency: {freq:.1f}Hz, Cutoff: {cutoff:.1f}Hz,"
-      f" Gain: {gain:.2f}"
-  )
+    return self.smoothed_freq, self.smoothed_gain

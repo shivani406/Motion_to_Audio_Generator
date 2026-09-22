@@ -19,16 +19,21 @@ class AudioSynthesizer:
 
   def _audio_callback(self, outdata, frames, time_info, status):
     with self.lock:
-      target_freq = self.frequency
-      target_gain = self.gain
+        target_freq = self.frequency
+        target_gain = self.gain
 
     t = (np.arange(frames) + self.phase) / self.sample_rate
     self.phase = (self.phase + frames) % self.sample_rate
 
-    sine_wave = np.sin(2 * np.pi * target_freq * t)
-    audio_signal = sine_wave * target_gain
+    fundamental = np.sin(2 * np.pi * target_freq * t)
+    sub_harmonic = 0.5 * np.sin(2 * np.pi * (target_freq * 0.5) * t)
+    overtone = 0.25 * np.sin(2 * np.pi * (target_freq * 1.5) * t)
 
-    outdata[:, 0] = audio_signal.astype(np.float32)
+    raw_signal = (fundamental + sub_harmonic + overtone) * target_gain
+
+    warm_signal = np.tanh(raw_signal)
+
+    outdata[:, 0] = warm_signal.astype(np.float32)
 
   def start(self):
     self.is_running = True
